@@ -6,7 +6,6 @@ algorithms. Code used for the ITSC paper can be found in the `scripts` folder.
 Setup:
 
 ```bash
-git clone git@github.com:RIVeR-Lab/platoon-gym.git
 cd platoon-gym
 virtualenv .platoon_env
 source .platoon_env/bin/activate
