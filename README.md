@@ -1,7 +1,7 @@
 # Platoon Gym
 
 Gym environment for prototyping, evaluating, and benchmarking platooning 
-algorithms. Code used for the IROS paper can be found in the `scripts` folder.
+algorithms. Code used for the paper can be found in the `scripts` folder.
 
 Setup:
 
