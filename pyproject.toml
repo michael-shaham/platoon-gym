@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platoon_gym"
+version = "0.0.0"
+dependencies = [
+    "black",
+    "cvxpy",
+    "gymnasium",
+    "h5py",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pettingzoo",
+    "pygame",
+    "pytest",
+    "scipy",
+    "torch",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["platoon_gym"]

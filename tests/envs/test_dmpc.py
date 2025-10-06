@@ -1,0 +1,146 @@
+"""
+Test the platoon environment with distributed MPC controllers.
+"""
+
+import copy
+import gymnasium as gym
+import numpy as np
+
+from platoon_gym.ctrl.dmpc import DMPC
+from platoon_gym.dyn.linear_vel import LinearVel
+from platoon_gym.veh.vehicle import Vehicle
+from platoon_gym.veh.virtual_leader import VirtualLeader
+from platoon_gym.veh.utils import VL_TRAJECTORY_TYPES
+
+
+def test_platoon_env_vel_dyn_pf_dmpc():
+    # set up dynamics
+    tau = 0.5
+    dt = 0.1
+    x_lims = np.array([[-np.inf, np.inf], [-np.inf, np.inf]])
+    u_lims = np.array([[-np.inf, np.inf]])
+    dyn = LinearVel(dt, x_lims, u_lims, tau)
+    d_des = 5.0
+
+    # set up controller
+    H = 50
+    A = dyn.Ad
+    B = dyn.Bd
+    C = dyn.C
+    n, m, p = dyn.n, dyn.m, dyn.p
+    Q = np.eye(p)
+    Q_neighbors = [np.eye(p)]
+    R = np.eye(m)
+    u_slew_rate = np.array([np.inf])
+    terminal_constraint = False
+    output_norm = "quadratic"
+    input_norm = "quadratic"
+    head_args = {
+        "H": H,
+        "Q": Q,
+        "Q_neighbors": Q_neighbors,
+        "R": R,
+        "A": A,
+        "B": B,
+        "C": C,
+        "x_lims": x_lims,
+        "u_lims": u_lims,
+        "u_slew_rate": u_slew_rate,
+        "distance_headways": [0.0],
+        "time_headways": [0.0],
+        "terminal_constraint": terminal_constraint,
+        "Qf": Q,
+        "Qf_neighbors": Q_neighbors,
+        "output_norm": output_norm,
+        "input_norm": input_norm,
+    }
+    trail_args = copy.deepcopy(head_args)
+    trail_args["distance_headways"] = [d_des]
+
+    # set up virtual leader
+    vl_vel = 22.0
+    vl_traj_type = "constant_velocity"
+    assert vl_traj_type in VL_TRAJECTORY_TYPES
+    vl_traj_args = {"horizon": H, "dt": dt}
+    vl = VirtualLeader("constant_velocity", vl_traj_args, velocity=vl_vel)
+
+    # set up platoon env
+    n_vehicles = 10
+    platoon_vel = 20.0
+    dyns = [dyn for _ in range(n_vehicles)]
+    ctrls = [DMPC(**head_args)] + [DMPC(**trail_args) for _ in range(1, n_vehicles)]
+    vehs = [Vehicle(dyns[0], position=0, velocity=20.0)]
+    vehs += [
+        Vehicle(dyns[i], position=-i * d_des, velocity=platoon_vel)
+        for i in range(1, n_vehicles)
+    ]
+    render_mode = "human"
+    config = {
+        "headway": "CDH",
+        "distance_headway": d_des,
+        "time_headway": 0.0,
+        "topology": "PF",
+        "dt": dt,
+        "reset_time": 10.0,
+        "record": False,
+        "record_directory": None,
+        "vehicles": vehs,
+        "virtual_leader": vl,
+    }
+    env = gym.make(
+        "platoon_env-v0",
+        config=config,
+        render_mode=render_mode,
+    )
+    obs, env_info = env.reset()
+    veh_states = env_info["vehicle_states"]
+
+    prev_assumed_states = []
+    for i in range(n_vehicles):
+        uref = veh_states[i][1] * np.ones((H, m))
+        xa = ctrls[i].initialize_assumed_trajectory(veh_states[i], uref)
+        prev_assumed_states.append(xa)
+
+    while True:
+        try:
+            env.render()
+            vl_plan = copy.deepcopy(env_info["virtual_leader_plan"][:2, : H + 1]).T
+            actions = []
+            assumed_states = []
+            for i in range(len(obs)):
+                if i == 0:
+                    end_state = copy.deepcopy(vl_plan[-1])
+                    y_neighbors = [vl_plan]
+                else:
+                    end_state = copy.deepcopy(prev_assumed_states[i - 1][-1])
+                    end_state[0] -= d_des
+                    y_neighbors = [prev_assumed_states[i - 1]]
+                uref = end_state[1] * np.ones((H, m))
+                action, ctrl_info = ctrls[i].control(
+                    x0=veh_states[i],
+                    y_neighbors=y_neighbors,
+                    xa=prev_assumed_states[i],
+                    ua=uref,
+                    xf=end_state,
+                )
+                xa, ua = ctrl_info["x"], ctrl_info["u"]
+                ua[:-1] = ua[1:]
+                ua[-1] = xa[-1][1]
+                xa[:-1] = xa[1:]
+                xa[-1] = dyns[i].forward(xa[-2], ua[-1])
+                assumed_states.append(xa)
+                actions.append(action)
+
+            # step environment
+            obs, _, _, trunc, env_info = env.step(action=actions)
+            if trunc:
+                break
+            veh_states = copy.deepcopy(env_info["vehicle_states"])
+            prev_assumed_states = copy.deepcopy(assumed_states)
+        except KeyboardInterrupt:
+            break
+    env.close()
+
+
+if __name__ == "__main__":
+    test_platoon_env_vel_dyn_pf_dmpc()
